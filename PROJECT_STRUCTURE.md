@@ -8,8 +8,12 @@
 > All formulas below were verified against the original PDF on 2026-10-06 (the md conversion had
 > garbled the math). Notation matches the brief exactly: lowercase `h` = a commit, `H` = a commit set.
 >
-> **Last updated:** 2026-10-06 — Phase: multi-repo backend implemented. Brief/formulas captured,
-> metric engine + aggregation + zip/URL ingestion + multi-repo registry/backend implemented and tested.
+> **Last updated:** 2026-10-06 — Phase: author merging implemented. Brief/formulas captured,
+> metric engine + aggregation + zip/URL ingestion + multi-repo registry/backend + web dashboard
+> (ingest/list/view) + filtering (time/author/path/commits/manual-list, composable, URL-persisted)
+> + author merging (mailmap auto-resolution + manual merge/un-merge UI, query-time re-aggregation)
+> implemented and tested.
+
 
 ---
 
@@ -252,7 +256,7 @@ file → directory → repo (root) → commit set → author.
 └────────────────────────────┘  └─────────────────────────────────┘
 ```
 
-**Implemented (2026-10-06):** Base metric engine (`rat_metric_engine`) with streaming git history traversal, per-commit numstat extraction, binary filtering, deletion/rename handling, TSV/JSONL output, aggregation layers for file, directory, repository, commit-set, and author metrics, plus framework-agnostic ingestion (`rat_metric_engine.ingestion`) for zip uploads and URL/local-path mirror clones. Multi-repo backend support includes repo-scoped metric storage, registry list/status/delete operations, per-repo cleanup, and bounded async ingestion. CLI entry point: `rat-metric-engine <repo>`.
+**Implemented (2026-10-06):** Base metric engine (`rat_metric_engine`) with streaming git history traversal, per-commit numstat extraction, binary filtering, deletion/rename handling, TSV/JSONL output, aggregation layers for file, directory, repository, commit-set, and author metrics, plus framework-agnostic ingestion (`rat_metric_engine.ingestion`) for zip uploads and URL/local-path mirror clones. Multi-repo backend support includes repo-scoped metric storage, registry list/status/delete operations, per-repo cleanup, and bounded async ingestion. A Flask dashboard (`rat_metric_engine.web`) provides repo list/ingest/status/metrics pages plus a JSON API. Filtering (docs/05) adds time (`H_t`/`H_{i,j}`), author, file/directory (exact/prefix), commit-hash, and manual-commit-list filters — all composable with AND logic, applied as query params over the precomputed metrics (no history re-walk), with URL-persisted filter state, active-filter chips, and an Authors tab. Author merging (docs/06) adds `.mailmap` parsing (`rat_metric_engine.mailmap`) applied once at ingestion time to resolve commit authors to their repo-declared canonical identity, plus a manual merge/un-merge dashboard page (`/repo/<id>/authors`) backed by a per-repo JSON mapping (`RepoRegistry.get_author_merges`/`merge_authors`/`unmerge_author`) that is applied at query time in `aggregate_commit_set`/`aggregate_author_metrics`/`distinct_authors` — so merges are cheap to change without recomputing raw deltas. CLI entry point: `rat-metric-engine <repo>`.
 
 ### Key architectural implications (drive the "efficient" rubric tiers)
 1. **Compute once at ingestion, not per request** — filters (author, time, commit subset) must be
@@ -277,16 +281,23 @@ SDP_Test1/
 ├── PROJECT_STRUCTURE.md               # THIS document — living context map
 ├── README.md                          # placeholder (currently just "# SDP_Test1")
 ├── pyproject.toml                     # Python packaging + pytest config (rat-metric-engine)
+├── run_dashboard.py                   # dev entry point: `python run_dashboard.py` starts the Flask dashboard
 ├── src/
 │   └── rat_metric_engine/
-│       ├── __init__.py                # public API: MetricEngine, ingestion, aggregation, writers
-│       ├── aggregation.py             # file/dir/repo/commit-set/author metric aggregation
-│       ├── engine.py                  # git history walk + numstat delta extraction + author metadata
-│       ├── ingestion.py               # zip/URL ingestion, multi-repo registry, delete, status, bounded async
-│       └── cli.py                     # CLI: rat-metric-engine <repo> [--ref --format --output]
+│       ├── __init__.py                # public API: MetricEngine, ingestion, aggregation, mailmap, writers, web app
+│       ├── aggregation.py             # file/dir/repo/commit-set/author metric aggregation + filters (time/author/path) + author-merge resolution
+│       ├── engine.py                  # git history walk + numstat delta extraction + author metadata + mailmap resolution
+│       ├── ingestion.py               # zip/URL ingestion, multi-repo registry, author-merge persistence, delete, status, bounded async
+│       ├── mailmap.py                 # .mailmap parsing + canonical identity resolution (docs/06)
+│       ├── cli.py                     # CLI: rat-metric-engine <repo> [--ref --format --output]
+│       ├── web.py                     # Flask dashboard: repo list/ingest/status/metrics/author-merge pages + filtered JSON API
+│       └── templates/                 # Bootstrap-based dashboard templates (index, ingest, repo, repo_metrics, authors)
 ├── tests/
 │   ├── test_metric_engine.py          # fixture repo covering initial/delete/binary/rename
-│   └── test_ingestion.py              # ingestion, async status, failure paths, multi-repo isolation/delete/queueing
+│   ├── test_ingestion.py              # ingestion, async status, failure paths, multi-repo isolation/delete/queueing
+│   ├── test_filtering.py              # aggregation-layer filter tests (time/author/path/commits/composition)
+│   ├── test_web.py                    # Flask test-client end-to-end tests for the dashboard + filtered API
+│   └── test_author_merging.py         # mailmap parsing, identity resolution, manual merge/un-merge persistence + web UI
 └── docs/                              # implementation plans (one per feature)
     ├── README.md                      # overview + dependency graph + build order
     ├── 01-metric-engine.md            # base extraction (history walk, rename, binary, deletions, l⁺/l⁻)
@@ -299,7 +310,7 @@ SDP_Test1/
     └── 08-validation.md               # validation harness (test repos, sample metrics, benchmarking)
 ```
 
-**Status:** Base metric engine (01), aggregation layers (02), ingestion pipeline (03), and multi-repo backend support (04 data model/registry/status/delete/concurrency) implemented and tested. Multi-repo UI selector remains deferred until dashboard work (07).
+**Status:** Base metric engine (01), aggregation layers (02), ingestion pipeline (03), multi-repo backend support (04 data model/registry/status/delete/concurrency), a Flask dashboard (list/ingest/status/metrics views), filtering (05 — time/author/path/commits/manual-list, composable, URL-persisted), and author merging (06 — mailmap auto-resolution at ingestion + manual merge/un-merge UI with query-time re-aggregation) are implemented and tested. Multi-repo UI (repo switcher) remains outstanding; all three tier-3 features (Filtering, Author Merging, Multi-repo *backend*) are now implemented, with only the multi-repo *UI* selector deferred.
 
 ### Progress log
 | Date | Update |
@@ -311,10 +322,14 @@ SDP_Test1/
 | 2026-10-06 | Tech stack decision: Python 3.10+ with git CLI subprocess wrapper. Package layout: `src/rat_metric_engine/` with `engine.py` (core), `cli.py` (entry point), `__init__.py` (public API). No external dependencies. |
 | 2026-10-06 | Implemented metric engine base extraction (01-metric-engine.md): git history traversal (non-merge, oldest-first topo order), per-commit diff extraction via `git diff-tree --numstat -M50`, binary file filtering, deletion handling, rename handling (including brace-form paths), initial commit handling via `--root`, streaming TSV/JSONL output. |
 | 2026-10-06 | Added CLI entry point: `rat-metric-engine <repo> [--ref HEAD] [--repo-id <id>] [--format tsv|jsonl] [--output <path>]`. Supports stdout or file output. |
+
 | 2026-10-06 | Added fixture-based unit tests covering: numstat parsing (binary skip, rename normalization), history traversal order, initial commit deltas, deletion deltas, binary exclusion, pure rename (l⁺=l⁻=0), rename-with-edit deltas, TSV/JSONL output format. All 4 tests pass. |
 | 2026-10-06 | Implemented metric categories (02-metric-categories.md): file metrics with growth/churn, recursive directory rollups, repository root metrics, commit-set sums/modification frequency/churn rate, author modifications/churn/ownership, and public API exports. Added author metadata extraction to `CommitInfo`; all 8 tests pass. |
 | 2026-10-06 | Implemented ingestion pipeline (03-ingestion.md): framework-agnostic `IngestionService` with zip upload (safe extraction, path traversal protection) and URL clone (`git clone --mirror`), JSON-backed `RepoRegistry` with thread-safe CRUD, async background-thread mode with pollable status, automatic metric engine trigger post-ingestion, and error handling with cleanup. All 13 tests pass. |
 | 2026-10-06 | Implemented multi-repo backend support (04-multi-repo.md): all metric records remain scoped by `repo_id`; `IngestionService` exposes list/status/add/delete operations; `RepoRegistry.delete()` removes registry metadata plus repo/metric storage; async ingestion now has a configurable concurrency limit with queued overflow work. Added tests for two-repo isolation, deletion cleanup, and queueing. All 16 tests pass. |
+| 2026-10-06 | Built an initial Flask dashboard (`web.py` + `templates/`) ahead of docs/07: repo list, ingest form (zip/URL), repo status page, metrics page, and a JSON API — not yet covered by tests. |
+| 2026-10-06 | Implemented filtering (05-filtering.md): `aggregate_commit_set`/`aggregate_author_metrics` gained `author` and `path` filter params (`distinct_authors()` helper added); path filtering deliberately never shrinks `\|H\|` (only time/author/commit-hash filters do) so modification-frequency/churn-rate stay correct. Wired filters into the dashboard (`parse_filters`, filtered `repo_metrics` route, filtered `/api/repos/<id>/metrics`) with a filter panel (date range, author dropdown, path, manual commit list), active-filter chips with per-filter clear links, a "Clear all filters" button, and URL-persisted filter state. Added an "Authors" tab to the dashboard to make the author metric category demonstrable. Found and fixed a pre-existing template bug (`{% set x = [m for m in ... if ...] %}` — Jinja2 has no list comprehensions) while adding `tests/test_web.py`. Added `tests/test_filtering.py` (aggregation-layer) and `tests/test_web.py` (Flask test-client end-to-end). Full suite: 35/35 tests pass. |
+| 2026-10-06 | Implemented author merging (06-author-merging.md): new `rat_metric_engine.mailmap` module parses the standard `.mailmap` formats (own regex-based parser, not git's `%aN`/`%aE`) into a `{commit_email: (canonical_name, canonical_email)}` alias map; `MetricEngine` loads and applies it once per repo at commit-extraction time (cheap, since mailmap is static repo content), so canonical identities are baked into stored object metrics. Manual merging is kept separate and query-time only (per the existing architecture note "merge must be re-appliable without recomputing raw diffs"): `aggregation.resolve_author_identity()` follows alias chains (with a cycle guard) and is now threaded through `aggregate_commit_set`, `aggregate_author_metrics`, and `distinct_authors` via an `author_merges` param. `RepoRegistry` persists merges per-repo in `metrics_dir/<repo_id>/author_merges.json` (`get_author_merges`/`merge_authors`/`unmerge_author`), cleaned up automatically by the existing repo-delete path. Added a dashboard "Merge Authors" page (`/repo/<id>/authors`, `templates/authors.html`) with checkbox+radio author selection, a custom-canonical-name field, and per-alias un-merge buttons; wired author-merge resolution into the existing filtered metrics route and JSON API so merged authors are summed and reported under one canonical identity. Added `tests/test_author_merging.py` (mailmap parsing for all supported formats, end-to-end mailmap resolution through `MetricEngine`, merge/un-merge persistence, re-aggregation correctness, and web-route coverage). Full suite: 53/53 tests pass, with no changes to previously passing test behaviour. |
 
 ---
 
@@ -338,5 +353,9 @@ SDP_Test1/
 4. ✅ Build up metric aggregation layers (file → directory → repository; commit sets; authors) — **completed 2026-10-06**.
 5. ✅ Ingestion (zip + URL), JSON repo registry, status, metric trigger — **completed 2026-10-06**.
 6. ✅ Multi-repo backend support (04): registry/schema/status/delete/concurrency — **completed 2026-10-06**. Repo selector remains part of dashboard UI.
-7. Dashboard UI + filtering; add repo selector and scoped views; author merge (mailmap + manual).
-8. Validation against cJSON → Redis → Git sample metrics (performance tiers in that order).
+7. ✅ Dashboard UI (list/ingest/status/metrics) — **completed 2026-10-06** (ahead of schedule, cross-cutting per docs/README.md).
+8. ✅ Filtering (05): time/author/path/commit-hash/manual-list, composable, URL-persisted, Authors tab — **completed 2026-10-06**.
+9. ✅ Author merging (06): mailmap auto-resolution at ingestion + manual merge/un-merge UI with query-time re-aggregation — **completed 2026-10-06**.
+10. Multi-repo *UI* selector (last remaining tier-3 gap: backend already supports it).
+11. Validation against cJSON → Redis → Git sample metrics (performance tiers in that order).
+
