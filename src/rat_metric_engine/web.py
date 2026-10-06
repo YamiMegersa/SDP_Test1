@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 import json
 from pathlib import Path
 
@@ -172,6 +171,7 @@ def register_routes(app: Flask, registry: RepoRegistry, ingestion: IngestionServ
                 "repo_metrics.html",
                 repo=metadata,
                 metrics=None,
+                author_metrics=[],
                 authors=[],
                 filters=filters,
                 active=False,
