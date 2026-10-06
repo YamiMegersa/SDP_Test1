@@ -217,40 +217,92 @@ def iter_commit_object_metrics(file_metrics: Iterable[ObjectMetric]) -> Iterator
         yield from build_commit_object_metrics(metrics)
 
 
+def _normalize_path_filter(path: str | None) -> str | None:
+    """Normalize a file/directory path filter.
+
+    Returns ``None`` when no real filtering is requested (unset, empty, or the
+    root path), otherwise a slash-stripped path used for exact/prefix matching.
+    """
+
+    if not path:
+        return None
+    normalized = path.strip().strip("/")
+    if not normalized or normalized == ROOT_PATH:
+        return None
+    return normalized
+
+
+def _path_matches(object_path: str, filter_path: str) -> bool:
+    """Return True if ``object_path`` is the path or lives under it.
+
+    Matches the brief's exact-match (files) and prefix-match (directories)
+    semantics from docs/05-filtering.md §5.3.
+    """
+
+    return object_path == filter_path or object_path.startswith(f"{filter_path}/")
+
+
+def _commit_set_filters(
+    metric: ObjectMetric,
+    selected_hashes: set[str] | None,
+    start_time: int | None,
+    end_time: int | None,
+    author: str | None,
+) -> bool:
+    """Return True if a metric's *commit* (time/author/hash) passes the filters.
+
+    Deliberately excludes the path filter: path only narrows which objects are
+    reported, it must never shrink the commit set size ``|H|`` used for
+    modification frequency / churn rate denominators.
+    """
+
+    if selected_hashes is not None and metric.commit_hash not in selected_hashes:
+        return False
+    if start_time is not None and metric.committer_date < start_time:
+        return False
+    if end_time is not None and metric.committer_date >= end_time:
+        return False
+    if author is not None and metric.author_identity != author:
+        return False
+    return True
+
+
 def aggregate_commit_set(
     metrics: Iterable[ObjectMetric],
     commit_hashes: Iterable[str] | None = None,
     start_time: int | None = None,
     end_time: int | None = None,
+    author: str | None = None,
+    path: str | None = None,
 ) -> list[CommitSetMetric]:
     """Aggregate object metrics over a commit set H.
 
-    ``commit_hashes`` can be used for a manual commit list. ``start_time`` is
-    inclusive and ``end_time`` is exclusive, matching the project formula for a
-    time-bounded commit set.
+    ``commit_hashes`` can be used for a manual commit list (or a specific
+    commit/hash range already resolved to hashes). ``start_time`` is inclusive
+    and ``end_time`` is exclusive, matching the project formula for a
+    time-bounded commit set. ``author`` restricts H to commits by that author
+    (post-merge identity). ``path`` restricts the *reported objects* to an
+    exact file path or anything under a directory path, without affecting the
+    size of H.
     """
 
     selected_hashes = set(commit_hashes) if commit_hashes is not None else None
-    selected_metrics: list[ObjectMetric] = []
+    normalized_path = _normalize_path_filter(path)
     selected_commits: set[str] = set()
-    for metric in metrics:
-        if selected_hashes is not None and metric.commit_hash not in selected_hashes:
-            continue
-        if start_time is not None and metric.committer_date < start_time:
-            continue
-        if end_time is not None and metric.committer_date >= end_time:
-            continue
-        selected_metrics.append(metric)
-        selected_commits.add(metric.commit_hash)
-
-    commit_count = len(selected_hashes) if selected_hashes is not None else len(selected_commits)
     totals: dict[tuple[str, str, ObjectType], list[int]] = defaultdict(lambda: [0, 0, 0])
-    for metric in selected_metrics:
+    for metric in metrics:
+        if not _commit_set_filters(metric, selected_hashes, start_time, end_time, author):
+            continue
+        selected_commits.add(metric.commit_hash)
+        if normalized_path is not None and not _path_matches(metric.object_path, normalized_path):
+            continue
         key = (metric.repo_id, metric.object_path, metric.object_type)
         totals[key][0] += metric.l_plus
         totals[key][1] += metric.l_minus
         if metric.churn > 0:
             totals[key][2] += 1
+
+    commit_count = len(selected_hashes) if selected_hashes is not None else len(selected_commits)
 
     return [
         CommitSetMetric(
@@ -271,45 +323,57 @@ def aggregate_author_metrics(
     commit_hashes: Iterable[str] | None = None,
     start_time: int | None = None,
     end_time: int | None = None,
+    author: str | None = None,
+    path: str | None = None,
 ) -> list[AuthorMetric]:
-    """Aggregate author modifications, churn, and ownership over a commit set H."""
+    """Aggregate author modifications, churn, and ownership over a commit set H.
+
+    Filter semantics mirror :func:`aggregate_commit_set`: ``author`` restricts
+    H to one author's commits (so only that author's rows are produced) and
+    ``path`` restricts which objects are reported without shrinking H.
+    """
 
     selected_hashes = set(commit_hashes) if commit_hashes is not None else None
-    selected_metrics: list[ObjectMetric] = []
+    normalized_path = _normalize_path_filter(path)
     selected_commits: set[str] = set()
-    for metric in metrics:
-        if selected_hashes is not None and metric.commit_hash not in selected_hashes:
-            continue
-        if start_time is not None and metric.committer_date < start_time:
-            continue
-        if end_time is not None and metric.committer_date >= end_time:
-            continue
-        selected_metrics.append(metric)
-        selected_commits.add(metric.commit_hash)
-
-    commit_count = len(selected_hashes) if selected_hashes is not None else len(selected_commits)
     object_churn: dict[tuple[str, str, ObjectType], int] = defaultdict(int)
     author_totals: dict[tuple[str, str, ObjectType, str], list[int]] = defaultdict(lambda: [0, 0])
 
-    for metric in selected_metrics:
+    for metric in metrics:
+        if not _commit_set_filters(metric, selected_hashes, start_time, end_time, author):
+            continue
+        selected_commits.add(metric.commit_hash)
+        if normalized_path is not None and not _path_matches(metric.object_path, normalized_path):
+            continue
         object_key = (metric.repo_id, metric.object_path, metric.object_type)
-        author = metric.author_identity
+        metric_author = metric.author_identity
         object_churn[object_key] += metric.churn
-        author_key = (*object_key, author)
+        author_key = (*object_key, metric_author)
         if metric.churn > 0:
             author_totals[author_key][0] += 1
         author_totals[author_key][1] += metric.churn
+
+    commit_count = len(selected_hashes) if selected_hashes is not None else len(selected_commits)
 
     return [
         AuthorMetric(
             repo_id=repo_id,
             object_path=object_path,
             object_type=object_type,
-            author=author,
+            author=author_name,
             commit_count=commit_count,
             total_churn=object_churn[(repo_id, object_path, object_type)],
             modifications=modifications,
             author_churn=author_churn,
         )
-        for (repo_id, object_path, object_type, author), (modifications, author_churn) in sorted(author_totals.items())
+        for (repo_id, object_path, object_type, author_name), (modifications, author_churn) in sorted(
+            author_totals.items()
+        )
     ]
+
+
+def distinct_authors(metrics: Iterable[ObjectMetric]) -> list[str]:
+    """Return the sorted, de-duplicated list of author identities in ``metrics``."""
+
+    authors = {metric.author_identity for metric in metrics if metric.author_identity}
+    return sorted(authors)
