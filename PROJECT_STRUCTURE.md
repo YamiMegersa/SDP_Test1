@@ -8,8 +8,8 @@
 > All formulas below were verified against the original PDF on 2026-10-06 (the md conversion had
 > garbled the math). Notation matches the brief exactly: lowercase `h` = a commit, `H` = a commit set.
 >
-> **Last updated:** 2026-10-06 — Phase: ingestion implemented. Brief/formulas captured,
-> metric engine + aggregation + zip/URL ingestion implemented and tested.
+> **Last updated:** 2026-10-06 — Phase: multi-repo backend implemented. Brief/formulas captured,
+> metric engine + aggregation + zip/URL ingestion + multi-repo registry/backend implemented and tested.
 
 ---
 
@@ -252,7 +252,7 @@ file → directory → repo (root) → commit set → author.
 └────────────────────────────┘  └─────────────────────────────────┘
 ```
 
-**Implemented (2026-10-06):** Base metric engine (`rat_metric_engine`) with streaming git history traversal, per-commit numstat extraction, binary filtering, deletion/rename handling, TSV/JSONL output, aggregation layers for file, directory, repository, commit-set, and author metrics, plus framework-agnostic ingestion (`rat_metric_engine.ingestion`) for zip uploads and URL/local-path mirror clones. CLI entry point: `rat-metric-engine <repo>`.
+**Implemented (2026-10-06):** Base metric engine (`rat_metric_engine`) with streaming git history traversal, per-commit numstat extraction, binary filtering, deletion/rename handling, TSV/JSONL output, aggregation layers for file, directory, repository, commit-set, and author metrics, plus framework-agnostic ingestion (`rat_metric_engine.ingestion`) for zip uploads and URL/local-path mirror clones. Multi-repo backend support includes repo-scoped metric storage, registry list/status/delete operations, per-repo cleanup, and bounded async ingestion. CLI entry point: `rat-metric-engine <repo>`.
 
 ### Key architectural implications (drive the "efficient" rubric tiers)
 1. **Compute once at ingestion, not per request** — filters (author, time, commit subset) must be
@@ -282,11 +282,11 @@ SDP_Test1/
 │       ├── __init__.py                # public API: MetricEngine, ingestion, aggregation, writers
 │       ├── aggregation.py             # file/dir/repo/commit-set/author metric aggregation
 │       ├── engine.py                  # git history walk + numstat delta extraction + author metadata
-│       ├── ingestion.py               # zip/URL ingestion service, JSON registry, status, metrics trigger
+│       ├── ingestion.py               # zip/URL ingestion, multi-repo registry, delete, status, bounded async
 │       └── cli.py                     # CLI: rat-metric-engine <repo> [--ref --format --output]
 ├── tests/
 │   ├── test_metric_engine.py          # fixture repo covering initial/delete/binary/rename
-│   └── test_ingestion.py              # zip/local clone ingestion, async status, failure paths
+│   └── test_ingestion.py              # ingestion, async status, failure paths, multi-repo isolation/delete/queueing
 └── docs/                              # implementation plans (one per feature)
     ├── README.md                      # overview + dependency graph + build order
     ├── 01-metric-engine.md            # base extraction (history walk, rename, binary, deletions, l⁺/l⁻)
@@ -299,7 +299,7 @@ SDP_Test1/
     └── 08-validation.md               # validation harness (test repos, sample metrics, benchmarking)
 ```
 
-**Status:** Base metric engine (01), aggregation layers (02), and ingestion pipeline (03) implemented and tested. Multi-repo (04) is next.
+**Status:** Base metric engine (01), aggregation layers (02), ingestion pipeline (03), and multi-repo backend support (04 data model/registry/status/delete/concurrency) implemented and tested. Multi-repo UI selector remains deferred until dashboard work (07).
 
 ### Progress log
 | Date | Update |
@@ -314,6 +314,7 @@ SDP_Test1/
 | 2026-10-06 | Added fixture-based unit tests covering: numstat parsing (binary skip, rename normalization), history traversal order, initial commit deltas, deletion deltas, binary exclusion, pure rename (l⁺=l⁻=0), rename-with-edit deltas, TSV/JSONL output format. All 4 tests pass. |
 | 2026-10-06 | Implemented metric categories (02-metric-categories.md): file metrics with growth/churn, recursive directory rollups, repository root metrics, commit-set sums/modification frequency/churn rate, author modifications/churn/ownership, and public API exports. Added author metadata extraction to `CommitInfo`; all 8 tests pass. |
 | 2026-10-06 | Implemented ingestion pipeline (03-ingestion.md): framework-agnostic `IngestionService` with zip upload (safe extraction, path traversal protection) and URL clone (`git clone --mirror`), JSON-backed `RepoRegistry` with thread-safe CRUD, async background-thread mode with pollable status, automatic metric engine trigger post-ingestion, and error handling with cleanup. All 13 tests pass. |
+| 2026-10-06 | Implemented multi-repo backend support (04-multi-repo.md): all metric records remain scoped by `repo_id`; `IngestionService` exposes list/status/add/delete operations; `RepoRegistry.delete()` removes registry metadata plus repo/metric storage; async ingestion now has a configurable concurrency limit with queued overflow work. Added tests for two-repo isolation, deletion cleanup, and queueing. All 16 tests pass. |
 
 ---
 
@@ -334,7 +335,8 @@ SDP_Test1/
 1. ✅ **Metrics deep-dive** — exact formulas already captured & PDF-verified (2026-10-06). Implementation semantics resolved during engine build.
 2. ✅ Tech stack & architecture decision — Python 3.10+ with git CLI subprocess wrapper (2026-10-06).
 3. ✅ Scaffold project; implement base delta extraction (rename/binary/deletion semantics) — **completed 2026-10-06**.
-4. **Build up metric aggregation layers** (file → directory → repository; commit sets; authors) — next priority (02-metric-categories.md).
-5. Ingestion (zip + URL), multi-repo registry.
-6. Dashboard UI + filtering; author merge (mailmap + manual).
-7. Validation against cJSON → Redis → Git sample metrics (performance tiers in that order).
+4. ✅ Build up metric aggregation layers (file → directory → repository; commit sets; authors) — **completed 2026-10-06**.
+5. ✅ Ingestion (zip + URL), JSON repo registry, status, metric trigger — **completed 2026-10-06**.
+6. ✅ Multi-repo backend support (04): registry/schema/status/delete/concurrency — **completed 2026-10-06**. Repo selector remains part of dashboard UI.
+7. Dashboard UI + filtering; add repo selector and scoped views; author merge (mailmap + manual).
+8. Validation against cJSON → Redis → Git sample metrics (performance tiers in that order).
