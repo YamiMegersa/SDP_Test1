@@ -118,11 +118,11 @@
 
 ## Acceptance Criteria
 
-- [ ] File metrics (`l⁺`, `l⁻`, `δ`, `λ`) correct for test commits
-- [ ] Directory metrics = sum of immediate children (files + subdirectories)
-- [ ] Repository metrics = root directory metrics
-- [ ] Commit set metrics (sums over `H`) correct for test commit sets
-- [ ] Modification frequency `η = n/|H|` correct
-- [ ] Churn rate `ρ = λ/|H|` correct
-- [ ] Author metrics (modifications, churn, ownership) correct for test authors
-- [ ] Aggregation strategy documented and performant for test repos
+- [x] File metrics (`l⁺`, `l⁻`, `δ`, `λ`) correct for test commits
+- [x] Directory metrics = sum of immediate children (files + subdirectories)
+- [x] Repository metrics = root directory metrics
+- [x] Commit set metrics (sums over `H`) correct for test commit sets
+- [x] Modification frequency `η = n/|H|` correct
+- [x] Churn rate `ρ = λ/|H|` correct
+- [x] Author metrics (modifications, churn, ownership) correct for test authors
+- [x] Aggregation strategy documented and performant for test repos

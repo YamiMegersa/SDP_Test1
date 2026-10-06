@@ -252,7 +252,7 @@ file → directory → repo (root) → commit set → author.
 └────────────────────────────┘  └─────────────────────────────────┘
 ```
 
-**Implemented (2026-10-06):** Base metric engine (`rat_metric_engine`) with streaming git history traversal, per-commit numstat extraction, binary filtering, deletion/rename handling, and TSV/JSONL output. CLI entry point: `rat-metric-engine <repo>`.
+**Implemented (2026-10-06):** Base metric engine (`rat_metric_engine`) with streaming git history traversal, per-commit numstat extraction, binary filtering, deletion/rename handling, TSV/JSONL output, and aggregation layers for file, directory, repository, commit-set, and author metrics. CLI entry point: `rat-metric-engine <repo>`.
 
 ### Key architectural implications (drive the "efficient" rubric tiers)
 1. **Compute once at ingestion, not per request** — filters (author, time, commit subset) must be
@@ -279,8 +279,9 @@ SDP_Test1/
 ├── pyproject.toml                     # Python packaging + pytest config (rat-metric-engine)
 ├── src/
 │   └── rat_metric_engine/
-│       ├── __init__.py                # public API: MetricEngine, FileDelta, writers
-│       ├── engine.py                  # git history walk + numstat delta extraction
+│       ├── __init__.py                # public API: MetricEngine, FileDelta, aggregation, writers
+│       ├── aggregation.py             # file/dir/repo/commit-set/author metric aggregation
+│       ├── engine.py                  # git history walk + numstat delta extraction + author metadata
 │       └── cli.py                     # CLI: rat-metric-engine <repo> [--ref --format --output]
 ├── tests/
 │   └── test_metric_engine.py          # fixture repo covering initial/delete/binary/rename
@@ -296,7 +297,7 @@ SDP_Test1/
     └── 08-validation.md               # validation harness (test repos, sample metrics, benchmarking)
 ```
 
-**Status:** Base metric engine (01) implemented and tested. Aggregation layers (02) and ingestion (03) are next.
+**Status:** Base metric engine (01) and aggregation layers (02) implemented and tested. Ingestion (03) is next.
 
 ### Progress log
 | Date | Update |
@@ -309,6 +310,7 @@ SDP_Test1/
 | 2026-10-06 | Implemented metric engine base extraction (01-metric-engine.md): git history traversal (non-merge, oldest-first topo order), per-commit diff extraction via `git diff-tree --numstat -M50`, binary file filtering, deletion handling, rename handling (including brace-form paths), initial commit handling via `--root`, streaming TSV/JSONL output. |
 | 2026-10-06 | Added CLI entry point: `rat-metric-engine <repo> [--ref HEAD] [--repo-id <id>] [--format tsv|jsonl] [--output <path>]`. Supports stdout or file output. |
 | 2026-10-06 | Added fixture-based unit tests covering: numstat parsing (binary skip, rename normalization), history traversal order, initial commit deltas, deletion deltas, binary exclusion, pure rename (l⁺=l⁻=0), rename-with-edit deltas, TSV/JSONL output format. All 4 tests pass. |
+| 2026-10-06 | Implemented metric categories (02-metric-categories.md): file metrics with growth/churn, recursive directory rollups, repository root metrics, commit-set sums/modification frequency/churn rate, author modifications/churn/ownership, and public API exports. Added author metadata extraction to `CommitInfo`; all 8 tests pass. |
 
 ---
 

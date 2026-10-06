@@ -21,6 +21,16 @@ class CommitInfo:
     commit_hash: str
     parent_hash: str | None
     committer_date: int
+    author_name: str = ""
+    author_email: str = ""
+
+    @property
+    def author_identity(self) -> str:
+        """Stable display identity for the commit author."""
+
+        if self.author_email and self.author_name:
+            return f"{self.author_name} <{self.author_email}>"
+        return self.author_name or self.author_email
 
 
 @dataclass(frozen=True)
@@ -90,22 +100,29 @@ class MetricEngine:
     def iter_commits(self) -> Iterator[CommitInfo]:
         """Yield non-merge commits in oldest-first topological order."""
 
+        field_separator = "\x1f"
         lines = _iter_git_stdout_lines(
             self.repo_path,
-            ["log", "--no-merges", "--topo-order", "--reverse", "--format=%H %P %ct", self.ref],
+            [
+                "log",
+                "--no-merges",
+                "--topo-order",
+                "--reverse",
+                "--format=%H%x1f%P%x1f%ct%x1f%an%x1f%ae",
+                self.ref,
+            ],
         )
         for line in lines:
             line = line.strip()
             if not line:
                 continue
-            parts = line.split()
-            if len(parts) < 2:
+            parts = line.split(field_separator)
+            if len(parts) != 5:
                 raise ValueError(f"Unexpected git log row: {line!r}")
-            commit_hash = parts[0]
-            committer_date = int(parts[-1])
-            parent_hashes = parts[1:-1]
+            commit_hash, parents, committer_date, author_name, author_email = parts
+            parent_hashes = parents.split()
             parent_hash = parent_hashes[0] if parent_hashes else None
-            yield CommitInfo(commit_hash, parent_hash, committer_date)
+            yield CommitInfo(commit_hash, parent_hash, int(committer_date), author_name, author_email)
 
     def iter_commit_deltas(self, commit: CommitInfo) -> Iterator[FileDelta]:
         """Yield parsed numstat deltas for one commit."""
@@ -135,6 +152,24 @@ class MetricEngine:
 
         for commit in self.iter_commits():
             yield from self.iter_commit_deltas(commit)
+
+    def iter_file_metrics(self):
+        """Yield per-commit file metrics with growth/churn properties."""
+
+        from .aggregation import file_metric_from_delta
+
+        for commit in self.iter_commits():
+            for delta in self.iter_commit_deltas(commit):
+                yield file_metric_from_delta(delta, commit)
+
+    def iter_object_metrics(self):
+        """Yield per-commit file, directory, and repository metrics."""
+
+        from .aggregation import build_commit_object_metrics, file_metric_from_delta
+
+        for commit in self.iter_commits():
+            file_metrics = [file_metric_from_delta(delta, commit) for delta in self.iter_commit_deltas(commit)]
+            yield from build_commit_object_metrics(file_metrics)
 
 
 def parse_numstat_line(line: str) -> tuple[str, int, int] | None:
