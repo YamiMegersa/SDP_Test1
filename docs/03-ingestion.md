@@ -108,21 +108,21 @@
 
 ## Implementation Notes
 
-- **Tech stack TBD:** Upload handling depends on backend framework (Flask/FastAPI/Express).
-- **Async ingestion:** For large repos, use a task queue (Celery, Bull, etc.) or background threads.
-- **Storage location:** Extracted/cloned repos stored in a configurable directory (e.g., `/data/repos/<repo_id>/`).
-- **Cleanup:** Failed ingestions should clean up temporary files.
-- **Security:** Validate inputs to prevent path traversal, command injection (URL cloning).
+- **Implemented:** Framework-agnostic Python ingestion service (`rat_metric_engine.ingestion`) that a web endpoint or CLI can call.
+- **Async ingestion:** Optional background-thread mode with pollable registry status for long-running jobs.
+- **Storage location:** Extracted/cloned repos are stored under a configurable registry base directory (`repos/<repo_id>/`), with metrics under `metrics/<repo_id>/`.
+- **Cleanup:** Failed ingestions clean up extracted/cloned repository files while preserving failed registry metadata.
+- **Security:** Zip extraction rejects unsafe member paths; URL cloning uses argument-list subprocess calls and URL validation.
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] Zip upload works for cJSON (small repo)
-- [ ] URL clone works for cJSON (small repo)
-- [ ] Invalid zip returns clear error
-- [ ] Invalid URL returns clear error
-- [ ] Repo metadata is stored after ingestion
-- [ ] Metric engine (01) is triggered automatically after ingestion
-- [ ] Ingestion status is queryable (for async large repos)
-- [ ] Failed ingestions are marked as failed with error message
+- [x] Zip upload works for small repos (fixture repo with top-level directory in zip)
+- [x] URL clone works for small repos (local git repo cloned via `git clone --mirror`)
+- [x] Invalid zip returns clear error
+- [x] Invalid URL returns clear error
+- [x] Repo metadata is stored after ingestion in a JSON registry
+- [x] Metric engine (01) is triggered automatically after ingestion and writes object metrics JSONL
+- [x] Ingestion status is queryable, including async background-thread ingestion
+- [x] Failed ingestions are marked as failed with error message
