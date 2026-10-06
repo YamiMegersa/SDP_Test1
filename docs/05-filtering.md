@@ -131,14 +131,51 @@
 
 ---
 
+## Implementation Status
+
+Implemented (2026-10-06): all filter dimensions are query-param-driven aggregations over the
+precomputed per-commit object metrics — never a re-walk of history, per the engine's own
+"compute once at ingestion" rule.
+
+- **Time (5.1):** `start_date`/`end_date` (`YYYY-MM-DD`) on the dashboard map to `H_t`/`H_{i,j}`
+  (`i` inclusive, `j` exclusive — the UI's inclusive "to date" is converted to the start of the
+  next day internally).
+- **Author (5.2):** `author` restricts H to one post-merge identity; the dropdown is populated
+  from `distinct_authors()` over the repo's raw metrics.
+- **File/directory (5.3):** `path` matches a file exactly or anything under a directory prefix.
+  Deliberately does **not** shrink `|H|` — only time/author/commit filters affect the
+  modification-frequency/churn-rate denominator; path only narrows which objects are reported.
+- **Commit hash/range (5.4) and manual commit list (5.5):** both use the same `commit_hashes`
+  mechanism (`aggregate_commit_set`/`aggregate_author_metrics`); the dashboard's `commits` field
+  accepts comma/whitespace-separated hashes (simplified per this file's own note — paste only,
+  no multi-select UI).
+- **Composition (5.6):** all filters AND together naturally since they're applied in one pass
+  over the metrics; verified via `test_filters_compose_with_and_logic`.
+- **UI (5.7):** `repo_metrics.html` has a filter panel (date range, author dropdown, path input,
+  commits input), active-filter chips with individual remove links, a "Clear all filters" button,
+  and filter state lives entirely in URL query params (shareable/bookmarkable). An "Authors" tab
+  was added to the dashboard to make the previously backend-only author metric category
+  demonstrable in the UI.
+
+Implementation: `aggregation.py` (`aggregate_commit_set`/`aggregate_author_metrics` gained
+`author`/`path` params plus `distinct_authors()`), `web.py` (`parse_filters`, `load_object_metrics`,
+filtered `repo_metrics` + `api_get_metrics` routes), `templates/repo_metrics.html`. Also fixed a
+pre-existing template bug (`{% set x = [m for m in ... if ...] %}` is invalid Jinja2 — no list
+comprehensions — rewritten with `selectattr(...)|list`) found while adding web test coverage.
+
+Tests: `tests/test_filtering.py` (aggregation-layer unit tests for each filter dimension plus
+composition and the `|H|`-not-shrunk-by-path invariant) and `tests/test_web.py` (Flask test-client
+end-to-end tests driving the dashboard routes and the filtered JSON API).
+
 ## Acceptance Criteria
 
-- [ ] Time period filter works (`H_t`, `H_{i,j}`)
-- [ ] Author filter works
-- [ ] File/directory filter works (exact and prefix match)
-- [ ] Commit hash/range filter works
-- [ ] Manual commit list selection works
-- [ ] Filters can be composed (AND logic)
-- [ ] Active filters are displayed as chips/tags
-- [ ] Filters can be cleared individually or all at once
-- [ ] Filter state is persisted (URL or session)
+- [x] Time period filter works (`H_t`, `H_{i,j}`)
+- [x] Author filter works
+- [x] File/directory filter works (exact and prefix match)
+- [x] Commit hash/range filter works
+- [x] Manual commit list selection works
+- [x] Filters can be composed (AND logic)
+- [x] Active filters are displayed as chips/tags
+- [x] Filters can be cleared individually or all at once
+- [x] Filter state is persisted (URL or session)
+

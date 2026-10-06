@@ -118,10 +118,10 @@
 
 ## Acceptance Criteria
 
-- [ ] Mailmap is parsed correctly (all formats)
-- [ ] Commit authors are mapped to canonical identities
-- [ ] Distinct author list reflects canonical identities
-- [ ] Manual merge UI works (select authors, merge)
-- [ ] Merge mappings persist across sessions
-- [ ] Author metrics are correct after merge (sum of merged identities)
-- [ ] Can un-merge authors; metrics revert correctly
+- [x] Mailmap is parsed correctly (all formats)
+- [x] Commit authors are mapped to canonical identities
+- [x] Distinct author list reflects canonical identities
+- [x] Manual merge UI works (select authors, merge)
+- [x] Merge mappings persist across sessions
+- [x] Author metrics are correct after merge (sum of merged identities)
+- [x] Can un-merge authors; metrics revert correctly

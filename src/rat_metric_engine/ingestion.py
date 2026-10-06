@@ -16,7 +16,7 @@ import re
 import shutil
 import subprocess
 import threading
-from typing import Callable, Literal
+from typing import Callable, Iterable, Literal
 from urllib.parse import urlparse
 from uuid import uuid4
 import zipfile
@@ -128,6 +128,56 @@ class RepoRegistry:
 
     def object_metrics_path(self, repo_id: str) -> Path:
         return self.metrics_dir / repo_id / "object_metrics.jsonl"
+
+    def author_merges_path(self, repo_id: str) -> Path:
+        """Path to the repo-scoped manual author-merge mappings
+        (docs/06-author-merging.md §6.4). Lives alongside the metrics so repo
+        deletion (which removes ``metrics_dir / repo_id``) cleans it up too.
+        """
+
+        return self.metrics_dir / repo_id / "author_merges.json"
+
+    def get_author_merges(self, repo_id: str) -> dict[str, str]:
+        """Return the ``{alias_identity: canonical_identity}`` map for a repo."""
+
+        path = self.author_merges_path(repo_id)
+        if not path.exists():
+            return {}
+        with self._lock:
+            with path.open("r", encoding="utf-8") as input_file:
+                return json.load(input_file)
+
+    def save_author_merges(self, repo_id: str, merges: dict[str, str]) -> None:
+        path = self.author_merges_path(repo_id)
+        with self._lock:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = path.with_suffix(".tmp")
+            with temp_path.open("w", encoding="utf-8") as output_file:
+                json.dump(merges, output_file, indent=2, sort_keys=True)
+                output_file.write("\n")
+            temp_path.replace(path)
+
+    def merge_authors(self, repo_id: str, aliases: Iterable[str], canonical: str) -> dict[str, str]:
+        """Add ``alias -> canonical`` mappings for the given alias identities.
+
+        Re-applying an existing alias simply overwrites its target. Mapping an
+        identity to itself is a no-op (nothing to merge).
+        """
+
+        merges = self.get_author_merges(repo_id)
+        for alias in aliases:
+            if alias and alias != canonical:
+                merges[alias] = canonical
+        self.save_author_merges(repo_id, merges)
+        return merges
+
+    def unmerge_author(self, repo_id: str, alias: str) -> dict[str, str]:
+        """Remove a single alias's merge mapping (docs/06-author-merging.md §6.6)."""
+
+        merges = self.get_author_merges(repo_id)
+        merges.pop(alias, None)
+        self.save_author_merges(repo_id, merges)
+        return merges
 
     def _load_records(self) -> dict[str, dict[str, object]]:
         if not self.registry_path.exists():

@@ -13,6 +13,8 @@ import subprocess
 from pathlib import Path
 from typing import Iterable, Iterator, TextIO
 
+from .mailmap import MailmapAliases, load_mailmap, resolve_mailmap_identity
+
 
 @dataclass(frozen=True)
 class CommitInfo:
@@ -88,11 +90,22 @@ def _iter_git_stdout_lines(repo_path: Path, args: list[str]) -> Iterator[str]:
 class MetricEngine:
     """Extract base metric deltas from a git repository."""
 
-    def __init__(self, repo_path: str | Path, ref: str = "HEAD", repo_id: str | None = None) -> None:
+    def __init__(
+        self,
+        repo_path: str | Path,
+        ref: str = "HEAD",
+        repo_id: str | None = None,
+        mailmap: MailmapAliases | None = None,
+    ) -> None:
         self.repo_path = Path(repo_path).resolve()
         self.ref = ref
         self.repo_id = repo_id or self.repo_path.name
         self._ensure_git_repository()
+        # Mailmap identity resolution (docs/06-author-merging.md §6.1/6.2) is
+        # applied once here, at extraction time, since it is static repo
+        # content. Manual merges (user-driven) are applied later, at the
+        # aggregation layer, so they stay cheap to change/undo.
+        self.mailmap = mailmap if mailmap is not None else load_mailmap(self.repo_path)
 
     def _ensure_git_repository(self) -> None:
         _run_git(self.repo_path, ["rev-parse", "--git-dir"])
@@ -122,6 +135,8 @@ class MetricEngine:
             commit_hash, parents, committer_date, author_name, author_email = parts
             parent_hashes = parents.split()
             parent_hash = parent_hashes[0] if parent_hashes else None
+            if self.mailmap:
+                author_name, author_email = resolve_mailmap_identity(author_name, author_email, self.mailmap)
             yield CommitInfo(commit_hash, parent_hash, int(committer_date), author_name, author_email)
 
     def iter_commit_deltas(self, commit: CommitInfo) -> Iterator[FileDelta]:

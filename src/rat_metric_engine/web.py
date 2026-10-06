@@ -7,7 +7,7 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, redirect, render_template, request, url_for
 
-from .aggregation import ObjectMetric, aggregate_author_metrics, aggregate_commit_set, distinct_authors
+from .aggregation import ObjectMetric, aggregate_author_metrics, aggregate_commit_set, distinct_authors, resolve_author_identity
 from .engine import MetricEngine
 from .ingestion import IngestionService, RepoRegistry
 
@@ -177,7 +177,8 @@ def register_routes(app: Flask, registry: RepoRegistry, ingestion: IngestionServ
                 active=False,
             )
 
-        authors = distinct_authors(object_metrics)
+        author_merges = registry.get_author_merges(repo_id)
+        authors = distinct_authors(object_metrics, author_merges=author_merges)
         metrics = aggregate_commit_set(
             object_metrics,
             commit_hashes=filters["commit_hashes"],
@@ -185,6 +186,7 @@ def register_routes(app: Flask, registry: RepoRegistry, ingestion: IngestionServ
             end_time=filters["end_time"],
             author=filters["author"],
             path=filters["path"],
+            author_merges=author_merges,
         )
         author_metrics = [
             metric
@@ -195,6 +197,7 @@ def register_routes(app: Flask, registry: RepoRegistry, ingestion: IngestionServ
                 end_time=filters["end_time"],
                 author=filters["author"],
                 path=filters["path"],
+                author_merges=author_merges,
             )
             if metric.object_type == "repository"
         ]
@@ -269,6 +272,7 @@ def register_routes(app: Flask, registry: RepoRegistry, ingestion: IngestionServ
         if not object_metrics:
             return jsonify({"metrics": [], "authors": []})
 
+        author_merges = registry.get_author_merges(repo_id)
         aggregated = aggregate_commit_set(
             object_metrics,
             commit_hashes=filters["commit_hashes"],
@@ -276,6 +280,7 @@ def register_routes(app: Flask, registry: RepoRegistry, ingestion: IngestionServ
             end_time=filters["end_time"],
             author=filters["author"],
             path=filters["path"],
+            author_merges=author_merges,
         )
         return jsonify(
             {
@@ -295,7 +300,79 @@ def register_routes(app: Flask, registry: RepoRegistry, ingestion: IngestionServ
                     }
                     for metric in aggregated
                 ],
-                "authors": distinct_authors(object_metrics),
+                "authors": distinct_authors(object_metrics, author_merges=author_merges),
             }
         )
+
+    @app.route("/repo/<repo_id>/authors")
+    def repo_authors(repo_id: str):
+        """Author merge management page (docs/06-author-merging.md).
+
+        Lists the repo's raw (post-mailmap) author identities grouped by
+        their current canonical identity, so authors can be merged or
+        un-merged.
+        """
+
+        try:
+            metadata = registry.get(repo_id)
+        except KeyError:
+            return Response("Repository not found", status=404)
+
+        object_metrics = load_object_metrics(metadata)
+        merges = registry.get_author_merges(repo_id)
+        raw_authors = distinct_authors(object_metrics)
+
+        groups: dict[str, list[str]] = {}
+        for identity in raw_authors:
+            canonical = resolve_author_identity(identity, merges)
+            groups.setdefault(canonical, []).append(identity)
+        # Canonical identities picked via a custom name won't appear in
+        # raw_authors; keep groups sorted by canonical identity for display.
+        sorted_groups = dict(sorted(groups.items()))
+
+        return render_template(
+            "authors.html",
+            repo=metadata,
+            raw_authors=raw_authors,
+            groups=sorted_groups,
+            merges=merges,
+        )
+
+    @app.route("/repo/<repo_id>/authors/merge", methods=["POST"])
+    def repo_authors_merge(repo_id: str):
+        """Merge selected author identities into one canonical identity."""
+
+        try:
+            registry.get(repo_id)
+        except KeyError:
+            return Response("Repository not found", status=404)
+
+        aliases = [alias for alias in request.form.getlist("aliases") if alias]
+        canonical = (request.form.get("canonical") or "").strip()
+        if not canonical:
+            canonical = (request.form.get("canonical_custom") or "").strip()
+        if not canonical:
+            return Response("A canonical author is required", status=400)
+        if not aliases:
+            return Response("Select at least one author to merge", status=400)
+
+        registry.merge_authors(repo_id, aliases, canonical)
+        return redirect(url_for("repo_authors", repo_id=repo_id))
+
+    @app.route("/repo/<repo_id>/authors/unmerge", methods=["POST"])
+    def repo_authors_unmerge(repo_id: str):
+        """Undo a single alias's manual merge (docs/06-author-merging.md §6.6)."""
+
+        try:
+            registry.get(repo_id)
+        except KeyError:
+            return Response("Repository not found", status=404)
+
+        alias = (request.form.get("alias") or "").strip()
+        if not alias:
+            return Response("Alias is required", status=400)
+
+        registry.unmerge_author(repo_id, alias)
+        return redirect(url_for("repo_authors", repo_id=repo_id))
+
 

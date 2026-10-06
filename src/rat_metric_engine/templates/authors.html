@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}Authors - {{ repo.name }} - RAT Dashboard{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1><i class="bi bi-people"></i> {{ repo.name }} — Author Merging</h1>
+        <p class="text-muted mb-0">Merge author identities (e.g. the same person with multiple emails) into one canonical author.</p>
+    </div>
+    <a href="{{ url_for('repo_metrics', repo_id=repo.repo_id) }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Metrics
+    </a>
+</div>
+
+<div class="alert alert-info small" role="alert">
+    <i class="bi bi-info-circle"></i>
+    Identities already combined via the repository's own <code>.mailmap</code> are shown pre-merged below.
+    Select two or more identities, choose which one is canonical (or type a custom name), then merge.
+    Merges are saved per-repository and can be undone at any time.
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        <i class="bi bi-arrow-left-right"></i> Merge author identities
+    </div>
+    <div class="card-body">
+        {% if raw_authors|length < 2 %}
+        <p class="text-muted mb-0">Need at least two distinct authors in this repository to merge.</p>
+        {% else %}
+        <form method="post" action="{{ url_for('repo_authors_merge', repo_id=repo.repo_id) }}">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th style="width: 5%"></th>
+                        <th>Author identity</th>
+                        <th style="width: 20%">Canonical?</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for identity in raw_authors %}
+                    <tr>
+                        <td><input type="checkbox" class="form-check-input" name="aliases" value="{{ identity }}"></td>
+                        <td>{{ identity }}</td>
+                        <td><input type="radio" class="form-check-input" name="canonical" value="{{ identity }}"></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <div class="row g-3 align-items-end">
+                <div class="col-md-6">
+                    <label for="canonical_custom" class="form-label">Or enter a new canonical name/email</label>
+                    <input type="text" class="form-control" id="canonical_custom" name="canonical_custom"
+                           placeholder="e.g. Jane Doe &lt;jane@example.com&gt;">
+                    <div class="form-text">Leave blank to use the identity selected above as canonical.</div>
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-arrow-left-right"></i> Merge selected
+                    </button>
+                </div>
+            </div>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-diagram-3"></i> Current author groups
+    </div>
+    <div class="card-body">
+        {% if groups %}
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Canonical identity</th>
+                    <th>Merged aliases</th>
+                    <th style="width: 15%"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for canonical, members in groups.items() %}
+                <tr>
+                    <td><strong>{{ canonical }}</strong></td>
+                    <td>
+                        {% for member in members %}
+                            {% if member != canonical %}
+                            <span class="badge bg-secondary me-1 mb-1">
+                                {{ member }}
+                                <form method="post" action="{{ url_for('repo_authors_unmerge', repo_id=repo.repo_id) }}" class="d-inline">
+                                    <input type="hidden" name="alias" value="{{ member }}">
+                                    <button type="submit" class="btn btn-link btn-sm text-white p-0 ms-1" title="Un-merge">×</button>
+                                </form>
+                            </span>
+                            {% endif %}
+                        {% endfor %}
+                        {% if members|length == 1 and members[0] == canonical %}
+                        <span class="text-muted small">Not merged</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{{ url_for('repo_metrics', repo_id=repo.repo_id, author=canonical) }}" class="btn btn-sm btn-outline-secondary">
+                            <i class="bi bi-funnel"></i> View metrics
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted mb-0">No authors found yet — the repository may still be processing.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

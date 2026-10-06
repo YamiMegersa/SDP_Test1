@@ -242,12 +242,35 @@ def _path_matches(object_path: str, filter_path: str) -> bool:
     return object_path == filter_path or object_path.startswith(f"{filter_path}/")
 
 
+def resolve_author_identity(identity: str, author_merges: dict[str, str] | None) -> str:
+    """Resolve a raw author identity through manual merge mappings.
+
+    ``author_merges`` maps ``alias_identity -> canonical_identity``
+    (docs/06-author-merging.md §6.3-6.5). Mappings are followed until a fixed
+    point is reached, with a cycle guard so a malformed/looping mapping
+    cannot cause an infinite loop.
+    """
+
+    if not author_merges:
+        return identity
+    seen = {identity}
+    current = identity
+    for _ in range(len(author_merges)):
+        next_identity = author_merges.get(current)
+        if next_identity is None or next_identity in seen:
+            return current
+        seen.add(next_identity)
+        current = next_identity
+    return current
+
+
 def _commit_set_filters(
     metric: ObjectMetric,
     selected_hashes: set[str] | None,
     start_time: int | None,
     end_time: int | None,
     author: str | None,
+    author_merges: dict[str, str] | None = None,
 ) -> bool:
     """Return True if a metric's *commit* (time/author/hash) passes the filters.
 
@@ -262,9 +285,10 @@ def _commit_set_filters(
         return False
     if end_time is not None and metric.committer_date >= end_time:
         return False
-    if author is not None and metric.author_identity != author:
+    if author is not None and resolve_author_identity(metric.author_identity, author_merges) != author:
         return False
     return True
+
 
 
 def aggregate_commit_set(
@@ -274,6 +298,7 @@ def aggregate_commit_set(
     end_time: int | None = None,
     author: str | None = None,
     path: str | None = None,
+    author_merges: dict[str, str] | None = None,
 ) -> list[CommitSetMetric]:
     """Aggregate object metrics over a commit set H.
 
@@ -283,7 +308,8 @@ def aggregate_commit_set(
     time-bounded commit set. ``author`` restricts H to commits by that author
     (post-merge identity). ``path`` restricts the *reported objects* to an
     exact file path or anything under a directory path, without affecting the
-    size of H.
+    size of H. ``author_merges`` applies manual author-merge mappings
+    (docs/06-author-merging.md) when matching ``author``.
     """
 
     selected_hashes = set(commit_hashes) if commit_hashes is not None else None
@@ -291,7 +317,7 @@ def aggregate_commit_set(
     selected_commits: set[str] = set()
     totals: dict[tuple[str, str, ObjectType], list[int]] = defaultdict(lambda: [0, 0, 0])
     for metric in metrics:
-        if not _commit_set_filters(metric, selected_hashes, start_time, end_time, author):
+        if not _commit_set_filters(metric, selected_hashes, start_time, end_time, author, author_merges):
             continue
         selected_commits.add(metric.commit_hash)
         if normalized_path is not None and not _path_matches(metric.object_path, normalized_path):
@@ -325,12 +351,16 @@ def aggregate_author_metrics(
     end_time: int | None = None,
     author: str | None = None,
     path: str | None = None,
+    author_merges: dict[str, str] | None = None,
 ) -> list[AuthorMetric]:
     """Aggregate author modifications, churn, and ownership over a commit set H.
 
     Filter semantics mirror :func:`aggregate_commit_set`: ``author`` restricts
     H to one author's commits (so only that author's rows are produced) and
     ``path`` restricts which objects are reported without shrinking H.
+    ``author_merges`` applies manual author-merge mappings
+    (docs/06-author-merging.md) so merged identities are reported — and
+    summed — as one canonical author.
     """
 
     selected_hashes = set(commit_hashes) if commit_hashes is not None else None
@@ -340,13 +370,13 @@ def aggregate_author_metrics(
     author_totals: dict[tuple[str, str, ObjectType, str], list[int]] = defaultdict(lambda: [0, 0])
 
     for metric in metrics:
-        if not _commit_set_filters(metric, selected_hashes, start_time, end_time, author):
+        if not _commit_set_filters(metric, selected_hashes, start_time, end_time, author, author_merges):
             continue
         selected_commits.add(metric.commit_hash)
         if normalized_path is not None and not _path_matches(metric.object_path, normalized_path):
             continue
         object_key = (metric.repo_id, metric.object_path, metric.object_type)
-        metric_author = metric.author_identity
+        metric_author = resolve_author_identity(metric.author_identity, author_merges)
         object_churn[object_key] += metric.churn
         author_key = (*object_key, metric_author)
         if metric.churn > 0:
@@ -372,8 +402,17 @@ def aggregate_author_metrics(
     ]
 
 
-def distinct_authors(metrics: Iterable[ObjectMetric]) -> list[str]:
-    """Return the sorted, de-duplicated list of author identities in ``metrics``."""
+def distinct_authors(metrics: Iterable[ObjectMetric], author_merges: dict[str, str] | None = None) -> list[str]:
+    """Return the sorted, de-duplicated list of author identities in ``metrics``.
 
-    authors = {metric.author_identity for metric in metrics if metric.author_identity}
+    Applies ``author_merges`` (docs/06-author-merging.md) when given, so
+    manually merged identities are reported once under their canonical name.
+    """
+
+    authors = {
+        resolve_author_identity(metric.author_identity, author_merges)
+        for metric in metrics
+        if metric.author_identity
+    }
     return sorted(authors)
+
