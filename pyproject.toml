@@ -7,7 +7,9 @@ name = "rat-metric-engine"
 version = "0.1.0"
 description = "Streaming git metric engine for RAT base line-delta extraction"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "flask>=3.0",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
