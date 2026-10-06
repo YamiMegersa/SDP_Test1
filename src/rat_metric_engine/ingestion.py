@@ -16,7 +16,7 @@ import re
 import shutil
 import subprocess
 import threading
-from typing import Literal
+from typing import Callable, Literal
 from urllib.parse import urlparse
 from uuid import uuid4
 import zipfile
@@ -109,6 +109,20 @@ class RepoRegistry:
         records = self._load_records()
         return [RepoMetadata(**records[repo_id]) for repo_id in sorted(records)]
 
+    def delete(self, repo_id: str) -> RepoMetadata:
+        """Remove a repository from the registry and delete its stored data."""
+
+        with self._lock:
+            records = self._load_records()
+            if repo_id not in records:
+                raise KeyError(f"Unknown repo_id: {repo_id}")
+            metadata = RepoMetadata(**records.pop(repo_id))
+            self._write_records(records)
+
+        cleanup_path(self.repo_storage_dir(repo_id))
+        cleanup_path(self.metrics_dir / repo_id)
+        return metadata
+
     def repo_storage_dir(self, repo_id: str) -> Path:
         return self.repos_dir / repo_id
 
@@ -133,9 +147,13 @@ class RepoRegistry:
 class IngestionService:
     """Orchestrate zip/URL ingestion and metric precomputation."""
 
-    def __init__(self, registry: RepoRegistry, ref: str = "HEAD") -> None:
+    def __init__(self, registry: RepoRegistry, ref: str = "HEAD", max_concurrent_ingestions: int = 2) -> None:
+        if max_concurrent_ingestions < 1:
+            raise ValueError("max_concurrent_ingestions must be at least 1")
         self.registry = registry
         self.ref = ref
+        self.max_concurrent_ingestions = max_concurrent_ingestions
+        self._ingestion_slots = threading.Semaphore(max_concurrent_ingestions)
         self._threads: dict[str, threading.Thread] = {}
 
     def ingest_zip(self, zip_path: str | Path, name: str | None = None, async_mode: bool = False) -> RepoMetadata:
@@ -144,7 +162,7 @@ class IngestionService:
         if async_mode:
             self._start_worker(metadata.repo_id, self._ingest_zip_worker, zip_path)
             return self.registry.get(metadata.repo_id)
-        return self._ingest_zip_worker(metadata.repo_id, zip_path)
+        return self._run_with_slot(metadata.repo_id, self._ingest_zip_worker, zip_path)
 
     def ingest_url(self, url: str, name: str | None = None, async_mode: bool = False) -> RepoMetadata:
         repo_name = name or derive_repo_name_from_url(url)
@@ -152,7 +170,22 @@ class IngestionService:
         if async_mode:
             self._start_worker(metadata.repo_id, self._ingest_url_worker, url)
             return self.registry.get(metadata.repo_id)
-        return self._ingest_url_worker(metadata.repo_id, url)
+        return self._run_with_slot(metadata.repo_id, self._ingest_url_worker, url)
+
+    def list_repos(self) -> list[RepoMetadata]:
+        """Return all repositories known to the registry."""
+
+        return self.registry.list()
+
+    def delete_repo(self, repo_id: str) -> RepoMetadata:
+        """Delete a repository and its ingested data."""
+
+        thread = self._threads.get(repo_id)
+        if thread is not None and thread.is_alive():
+            status = self.registry.get(repo_id).status
+            raise IngestionError(f"Cannot delete repo {repo_id!r} while ingestion is {status}")
+        self._threads.pop(repo_id, None)
+        return self.registry.delete(repo_id)
 
     def status(self, repo_id: str) -> RepoMetadata:
         return self.registry.get(repo_id)
@@ -163,10 +196,14 @@ class IngestionService:
             thread.join(timeout=timeout)
         return self.registry.get(repo_id)
 
-    def _start_worker(self, repo_id: str, target, *args: object) -> None:
-        thread = threading.Thread(target=target, args=(repo_id, *args), daemon=True)
+    def _start_worker(self, repo_id: str, target: Callable[..., RepoMetadata], *args: object) -> None:
+        thread = threading.Thread(target=self._run_with_slot, args=(repo_id, target, *args), daemon=True)
         self._threads[repo_id] = thread
         thread.start()
+
+    def _run_with_slot(self, repo_id: str, target: Callable[..., RepoMetadata], *args: object) -> RepoMetadata:
+        with self._ingestion_slots:
+            return target(repo_id, *args)
 
     def _ingest_zip_worker(self, repo_id: str, zip_path: Path) -> RepoMetadata:
         repo_dir = self.registry.repo_storage_dir(repo_id)

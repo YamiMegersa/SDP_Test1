@@ -81,13 +81,17 @@
 
 ---
 
+## Implementation Status
+
+Implemented backend support (2026-10-06): the framework-agnostic `IngestionService` and `RepoRegistry` now provide the multi-repo API surface needed by future web endpoints: list, add via zip/URL ingestion, status lookup, delete with data cleanup, repo-scoped metric files, and bounded async ingestion (`max_concurrent_ingestions`, default 2). The UI selector remains deferred to `07-dashboard.md` because no dashboard framework exists yet.
+
 ## Acceptance Criteria
 
-- [ ] Schema includes `repo_id` in all metric tables
-- [ ] Can list repos via API
-- [ ] Can add a repo (triggers ingestion)
-- [ ] Can delete a repo (cleans up data)
+- [x] Schema includes `repo_id` in all metric tables
+- [x] Can list repos via API
+- [x] Can add a repo (triggers ingestion)
+- [x] Can delete a repo (cleans up data)
 - [ ] UI shows repo selector (dropdown)
-- [ ] Metrics are scoped to selected repo
-- [ ] Can ingest multiple repos concurrently
-- [ ] Ingestion status is queryable per repo
+- [x] Metrics are scoped to selected repo
+- [x] Can ingest multiple repos concurrently
+- [x] Ingestion status is queryable per repo
