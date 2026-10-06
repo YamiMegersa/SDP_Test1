@@ -8,8 +8,8 @@
 > All formulas below were verified against the original PDF on 2026-10-06 (the md conversion had
 > garbled the math). Notation matches the brief exactly: lowercase `h` = a commit, `H` = a commit set.
 >
-> **Last updated:** 2026-10-06 — Phase: pre-build. Brief fully captured (§1–§3, all formulas).
-> Awaiting go-ahead for the metrics deep-dive before building anything.
+> **Last updated:** 2026-10-06 — Phase: ingestion implemented. Brief/formulas captured,
+> metric engine + aggregation + zip/URL ingestion implemented and tested.
 
 ---
 
@@ -252,7 +252,7 @@ file → directory → repo (root) → commit set → author.
 └────────────────────────────┘  └─────────────────────────────────┘
 ```
 
-**Implemented (2026-10-06):** Base metric engine (`rat_metric_engine`) with streaming git history traversal, per-commit numstat extraction, binary filtering, deletion/rename handling, TSV/JSONL output, and aggregation layers for file, directory, repository, commit-set, and author metrics. CLI entry point: `rat-metric-engine <repo>`.
+**Implemented (2026-10-06):** Base metric engine (`rat_metric_engine`) with streaming git history traversal, per-commit numstat extraction, binary filtering, deletion/rename handling, TSV/JSONL output, aggregation layers for file, directory, repository, commit-set, and author metrics, plus framework-agnostic ingestion (`rat_metric_engine.ingestion`) for zip uploads and URL/local-path mirror clones. CLI entry point: `rat-metric-engine <repo>`.
 
 ### Key architectural implications (drive the "efficient" rubric tiers)
 1. **Compute once at ingestion, not per request** — filters (author, time, commit subset) must be
@@ -279,12 +279,14 @@ SDP_Test1/
 ├── pyproject.toml                     # Python packaging + pytest config (rat-metric-engine)
 ├── src/
 │   └── rat_metric_engine/
-│       ├── __init__.py                # public API: MetricEngine, FileDelta, aggregation, writers
+│       ├── __init__.py                # public API: MetricEngine, ingestion, aggregation, writers
 │       ├── aggregation.py             # file/dir/repo/commit-set/author metric aggregation
 │       ├── engine.py                  # git history walk + numstat delta extraction + author metadata
+│       ├── ingestion.py               # zip/URL ingestion service, JSON registry, status, metrics trigger
 │       └── cli.py                     # CLI: rat-metric-engine <repo> [--ref --format --output]
 ├── tests/
-│   └── test_metric_engine.py          # fixture repo covering initial/delete/binary/rename
+│   ├── test_metric_engine.py          # fixture repo covering initial/delete/binary/rename
+│   └── test_ingestion.py              # zip/local clone ingestion, async status, failure paths
 └── docs/                              # implementation plans (one per feature)
     ├── README.md                      # overview + dependency graph + build order
     ├── 01-metric-engine.md            # base extraction (history walk, rename, binary, deletions, l⁺/l⁻)
@@ -297,7 +299,7 @@ SDP_Test1/
     └── 08-validation.md               # validation harness (test repos, sample metrics, benchmarking)
 ```
 
-**Status:** Base metric engine (01) and aggregation layers (02) implemented and tested. Ingestion (03) is next.
+**Status:** Base metric engine (01), aggregation layers (02), and ingestion pipeline (03) implemented and tested. Multi-repo (04) is next.
 
 ### Progress log
 | Date | Update |
@@ -311,6 +313,7 @@ SDP_Test1/
 | 2026-10-06 | Added CLI entry point: `rat-metric-engine <repo> [--ref HEAD] [--repo-id <id>] [--format tsv|jsonl] [--output <path>]`. Supports stdout or file output. |
 | 2026-10-06 | Added fixture-based unit tests covering: numstat parsing (binary skip, rename normalization), history traversal order, initial commit deltas, deletion deltas, binary exclusion, pure rename (l⁺=l⁻=0), rename-with-edit deltas, TSV/JSONL output format. All 4 tests pass. |
 | 2026-10-06 | Implemented metric categories (02-metric-categories.md): file metrics with growth/churn, recursive directory rollups, repository root metrics, commit-set sums/modification frequency/churn rate, author modifications/churn/ownership, and public API exports. Added author metadata extraction to `CommitInfo`; all 8 tests pass. |
+| 2026-10-06 | Implemented ingestion pipeline (03-ingestion.md): framework-agnostic `IngestionService` with zip upload (safe extraction, path traversal protection) and URL clone (`git clone --mirror`), JSON-backed `RepoRegistry` with thread-safe CRUD, async background-thread mode with pollable status, automatic metric engine trigger post-ingestion, and error handling with cleanup. All 13 tests pass. |
 
 ---
 
